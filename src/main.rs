@@ -3,11 +3,14 @@ use std::time::Duration;
 use bevy::{
     core_pipeline::clear_color::ClearColorConfig, prelude::*, sprite::MaterialMesh2dBundle,
 };
-use bevy_rapier2d::prelude::{
-    Ccd, Collider, ExternalImpulse, GravityScale, NoUserData, RapierPhysicsPlugin, RigidBody,
-    Sleeping, Velocity,
+use bevy_rapier2d::{
+    prelude::{
+        Ccd, Collider, ColliderMassProperties, ExternalImpulse, GravityScale, NoUserData,
+        RapierPhysicsPlugin, RigidBody, Sensor, Sleeping, Velocity,
+    },
+    render::RapierDebugRenderPlugin,
 };
-use bevy_turborand::{GlobalRng, rng::Rng, GenCore, RngPlugin, RngComponent, DelegatedRng};
+use bevy_turborand::{rng::Rng, DelegatedRng, GenCore, GlobalRng, RngComponent, RngPlugin};
 
 #[derive(Component)]
 struct PlayerComponent {
@@ -30,13 +33,11 @@ fn spawn_pipes(
     mut spawner: ResMut<PipeSpawnerResource>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    mut global_rng: ResMut<GlobalRng>
+    mut global_rng: ResMut<GlobalRng>,
 ) {
     spawner.timer.tick(time.delta());
 
-
     if spawner.timer.finished() {
-
         let rand_y = global_rng.i32(-200..=200) as f32;
 
         println!("Spawing psaiwn");
@@ -48,29 +49,42 @@ fn spawn_pipes(
             .insert(MaterialMesh2dBundle {
                 mesh: meshes.add(shape::Circle::new(10.0).into()).into(),
                 material: materials.add(ColorMaterial::from(Color::PURPLE)),
-                transform: Transform::from_translation(Vec3::new(500., rand_y, 0.)),
+                transform: Transform::from_translation(Vec3::new(600., rand_y, 0.)),
                 ..default()
             })
+            .insert(Collider::cuboid(25.0, 150.0))
+            .insert(Sensor)
             .id();
 
+        let pipe_collider = Collider::cuboid(25.0, 250.0);
+        let pipe_mesh_down = MaterialMesh2dBundle {
+            mesh: meshes.add(shape::Box::new(50.0, 500.0, 1.0).into()).into(),
+            material: materials.add(ColorMaterial::from(Color::RED)),
+            transform: Transform::from_translation(Vec3::new(0., -350., 0.)),
+            ..default()
+        };
+
+        let pipe_mesh_up = MaterialMesh2dBundle {
+            mesh: meshes.add(shape::Box::new(50.0, 500.0, 1.0).into()).into(),
+            material: materials.add(ColorMaterial::from(Color::RED)),
+            transform: Transform::from_translation(Vec3::new(0., 350., 0.)),
+            ..default()
+        };
+
         let pipe_up = commands
-            .spawn(MaterialMesh2dBundle {
-                mesh: meshes.add(shape::Box::new(50.0, 500.0, 1.0).into()).into(),
-                material: materials.add(ColorMaterial::from(Color::RED)),
-                transform: Transform::from_translation(Vec3::new(0., 350., 0.)),
-                ..default()
-            })
+            .spawn(pipe_mesh_up)
             .insert(RigidBody::KinematicPositionBased)
+            .insert(Sleeping::disabled())
+            .insert(Ccd::enabled())
+            .insert(pipe_collider.clone())
             .id();
 
         let pipe_bottom = commands
-            .spawn(MaterialMesh2dBundle {
-                mesh: meshes.add(shape::Box::new(50.0, 500.0, 1.0).into()).into(),
-                material: materials.add(ColorMaterial::from(Color::RED)),
-                transform: Transform::from_translation(Vec3::new(0., -350., 0.)),
-                ..default()
-            })
+            .spawn(pipe_mesh_down)
             .insert(RigidBody::KinematicPositionBased)
+            .insert(Sleeping::disabled())
+            .insert(Ccd::enabled())
+            .insert(pipe_collider.clone())
             .id();
 
         commands.entity(pipes_container).add_child(pipe_up);
@@ -78,17 +92,14 @@ fn spawn_pipes(
     }
 }
 
-
-fn move_pipes (mut pipes: Query<(&mut Transform , &mut RngComponent), (With<PipeSpawner>)>, time: Res<Time>) {
-
+fn move_pipes(
+    mut pipes: Query<(&mut Transform, &mut RngComponent), (With<PipeSpawner>)>,
+    time: Res<Time>,
+) {
     for mut pipe in pipes.iter_mut() {
-
         pipe.0.translation.x -= 5.0;
     }
-
 }
-
-
 
 fn add_entities(
     mut commands: Commands,
@@ -97,7 +108,7 @@ fn add_entities(
 ) {
     commands.insert_resource(PipeSpawnerResource {
         // create the repeating timer
-        timer: Timer::new(Duration::from_secs(1), TimerMode::Repeating),
+        timer: Timer::new(Duration::from_secs(2), TimerMode::Repeating),
     });
 
     let mut camera = Camera2dBundle::default();
@@ -119,17 +130,14 @@ fn add_entities(
         })
         .insert(RigidBody::Dynamic)
         .insert(Collider::ball(50.0))
-        .insert(Velocity {
-            linvel: Vec2::new(0.0, 2.0),
-            angvel: 0.2,
-        })
         .insert(GravityScale(9.81))
         .insert(Sleeping::disabled())
         .insert(Ccd::enabled())
         .insert(ExternalImpulse {
-            impulse: Vec2::new(0.0, 200.0),
+            impulse: Vec2::new(0.0, 20.0),
             torque_impulse: 14.0,
         })
+        .insert(ColliderMassProperties::Density(0.1))
         .insert(PlayerComponent {
             name: "Birdy 1".into(),
             health: 3.0,
@@ -142,7 +150,7 @@ fn move_player(
 ) {
     for mut ext_impulse in query.iter_mut() {
         if keys.just_released(KeyCode::Space) {
-            ext_impulse.impulse = Vec2::new(0.0, 800.0);
+            ext_impulse.impulse = Vec2::new(0.0, 100.0);
             ext_impulse.torque_impulse = 0.0;
         }
     }
@@ -153,6 +161,7 @@ fn main() {
     app.add_plugins(DefaultPlugins);
     app.add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0));
     app.add_plugin(RngPlugin::new().with_rng_seed(12345));
+    app.add_plugin(RapierDebugRenderPlugin::default());
     app.add_startup_system(add_entities);
     app.add_system(move_player);
     app.add_system(spawn_pipes);
